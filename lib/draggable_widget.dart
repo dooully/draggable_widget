@@ -40,6 +40,8 @@ class DraggableWidget extends StatefulWidget {
   /// A drag controller to show/hide or move the widget around the screen
   final DragController dragController;
 
+  final bool disablePosition;
+
   /// [BoxShadow] when the widget is not being dragged, default to
   /// ```Dart
   ///const BoxShadow(
@@ -80,6 +82,7 @@ class DraggableWidget extends StatefulWidget {
     this.shadowBorderRadius = 10,
     this.dragController,
     this.dragAnimationScale = 1.1,
+    this.disablePosition = true,
     this.touchDelay = Duration.zero,
     this.normalShadow = const BoxShadow(
       color: Colors.black38,
@@ -101,12 +104,12 @@ class DraggableWidget extends StatefulWidget {
         assert(bottomMargin >= 0 && bottomMargin != null),
         assert(intialVisibility != null),
         assert(child != null);
+
   @override
   _DraggableWidgetState createState() => _DraggableWidgetState();
 }
 
-class _DraggableWidgetState extends State<DraggableWidget>
-    with SingleTickerProviderStateMixin {
+class _DraggableWidgetState extends State<DraggableWidget> with SingleTickerProviderStateMixin {
   double top = 0, left = 0;
   double boundary = 0;
   AnimationController animationController;
@@ -130,6 +133,9 @@ class _DraggableWidgetState extends State<DraggableWidget>
   bool get currentVisibilty => visible ?? widget.intialVisibility;
 
   bool isStillTouching;
+
+  double downX;
+  double downY;
 
   @override
   void initState() {
@@ -194,7 +200,7 @@ class _DraggableWidgetState extends State<DraggableWidget>
     });
     super.initState();
   }
-  
+
   @override
   void dispose() {
     animationController.dispose();
@@ -260,6 +266,8 @@ class _DraggableWidgetState extends State<DraggableWidget>
                   isStillTouching = false;
                   await Future.delayed(widget.touchDelay);
                   isStillTouching = true;
+                  downX = v.position.dx;
+                  downY = v.position.dy;
                 },
                 onPointerMove: (v) async {
                   if (!isStillTouching) {
@@ -272,13 +280,15 @@ class _DraggableWidgetState extends State<DraggableWidget>
 
                   setState(() {
                     dragging = true;
-                    if (v.position.dy < boundary &&
-                        v.position.dy > widget.topMargin) {
-                      top = max(v.position.dy - (widgetHeight) / 2, 0);
+
+                    if (v.position.dy < boundary && v.position.dy > widget.topMargin) {
+                      top += (v.position.dy - downY);
                     }
 
-                    left = max(v.position.dx - (widgetWidth) / 2, 0);
+                    left += (v.position.dx - downX);
 
+                    downX = v.position.dx;
+                    downY = v.position.dy;
                     hardLeft = left;
                     hardTop = top;
                   });
@@ -294,12 +304,9 @@ class _DraggableWidgetState extends State<DraggableWidget>
                     child: AnimatedContainer(
                         duration: Duration(milliseconds: 150),
                         decoration: BoxDecoration(
-                          borderRadius:
-                              BorderRadius.circular(widget.shadowBorderRadius),
+                          borderRadius: BorderRadius.circular(widget.shadowBorderRadius),
                           boxShadow: [
-                            dragging
-                                ? widget.draggingShadow
-                                : widget.normalShadow
+                            dragging ? widget.draggingShadow : widget.normalShadow
                             // BoxShadow(
                             //   color: Colors.black38,
                             //   offset: dragging ? Offset(0, 10) : Offset(0, 4),
@@ -307,9 +314,7 @@ class _DraggableWidgetState extends State<DraggableWidget>
                             // )
                           ],
                         ),
-                        child: Transform.scale(
-                            scale: dragging ? widget.dragAnimationScale : 1,
-                            child: widget.child)),
+                        child: Transform.scale(scale: dragging ? widget.dragAnimationScale : 1, child: widget.child)),
                   ),
                 ),
               ),
@@ -320,6 +325,10 @@ class _DraggableWidgetState extends State<DraggableWidget>
   AnchoringPosition determineDocker(double x, double y) {
     final double totalHeight = boundary;
     final double totalWidth = MediaQuery.of(context).size.width;
+
+    if (widget.disablePosition) {
+      return AnchoringPosition.none;
+    }
 
     if (x <= totalWidth / 2 && y <= totalHeight / 2) {
       return AnchoringPosition.topLeft;
@@ -337,14 +346,26 @@ class _DraggableWidgetState extends State<DraggableWidget>
     final double totalWidth = MediaQuery.of(context).size.width;
 
     switch (docker) {
+      case AnchoringPosition.none:
+        // (totalWidth / 2 - (widgetWidth / 2)) - hardLeft
+
+        bool isLeft = (totalWidth / 2) > (hardLeft + (widgetWidth / 2));
+        double remaingDistanceX = (totalWidth - widgetWidth - hardLeft);
+        setState(() {
+          left = isLeft ? max((1 - animation.value) * left, 0) : hardLeft + (animation.value) * remaingDistanceX;
+          top = hardTop;
+          print("left : " + left.toString() + "   top : " + top.toString());
+
+          currentlyDocked = AnchoringPosition.none;
+        });
+        break;
       case AnchoringPosition.topLeft:
         setState(() {
           left = (1 - animation.value) * hardLeft;
           if (animation.value == 0) {
             top = hardTop;
           } else {
-            top = ((1 - animation.value) * hardTop +
-                (widget.topMargin * (animation.value)));
+            top = ((1 - animation.value) * hardTop + (widget.topMargin * (animation.value)));
           }
 
           currentlyDocked = AnchoringPosition.topLeft;
@@ -357,8 +378,7 @@ class _DraggableWidgetState extends State<DraggableWidget>
           if (animation.value == 0) {
             top = hardTop;
           } else {
-            top = ((1 - animation.value) * hardTop +
-                (widget.topMargin * (animation.value)));
+            top = ((1 - animation.value) * hardTop + (widget.topMargin * (animation.value)));
           }
           currentlyDocked = AnchoringPosition.topRight;
         });
@@ -367,9 +387,7 @@ class _DraggableWidgetState extends State<DraggableWidget>
         double remaingDistanceY = (totalHeight - widgetHeight - hardTop);
         setState(() {
           left = (1 - animation.value) * hardLeft;
-          top = hardTop +
-              (animation.value) * remaingDistanceY +
-              (widget.statusBarHeight * animation.value);
+          top = hardTop + (animation.value) * remaingDistanceY + (widget.statusBarHeight * animation.value);
           currentlyDocked = AnchoringPosition.bottomLeft;
         });
         break;
@@ -378,17 +396,13 @@ class _DraggableWidgetState extends State<DraggableWidget>
         double remaingDistanceY = (totalHeight - widgetHeight - hardTop);
         setState(() {
           left = hardLeft + (animation.value) * remaingDistanceX;
-          top = hardTop +
-              (animation.value) * remaingDistanceY +
-              (widget.statusBarHeight * animation.value);
+          top = hardTop + (animation.value) * remaingDistanceY + (widget.statusBarHeight * animation.value);
           currentlyDocked = AnchoringPosition.bottomRight;
         });
         break;
       case AnchoringPosition.center:
-        double remaingDistanceX =
-            (totalWidth / 2 - (widgetWidth / 2)) - hardLeft;
-        double remaingDistanceY =
-            (totalHeight / 2 - (widgetHeight / 2)) - hardTop;
+        double remaingDistanceX = (totalWidth / 2 - (widgetWidth / 2)) - hardLeft;
+        double remaingDistanceY = (totalHeight / 2 - (widgetHeight / 2)) - hardTop;
         // double remaingDistanceX = (totalWidth - widgetWidth - hardLeft) / 2.0;
         // double remaingDistanceY = (totalHeight - widgetHeight - hardTop) / 2.0;
         setState(() {
@@ -439,6 +453,7 @@ class _DraggableWidgetState extends State<DraggableWidget>
 
 class DragController {
   _DraggableWidgetState _widgetState;
+
   void _addState(_DraggableWidgetState _widgetState) {
     this._widgetState = _widgetState;
   }
